@@ -1,4 +1,5 @@
 import json
+import os
 import requests
 from django.shortcuts import render
 from django.http import JsonResponse
@@ -36,9 +37,8 @@ def create_order(request):
                 )
                 items_list += f"• {item['title']} x{item['q']}\n"
 
-            # 3. Відправка в Telegram
-            bot_token = '8739853169:AAHRY7bcjBrzMwi5TmXaoz9N1Rf8FGM4epY'
-            chat_id = 1754515612
+            bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            chat_id = os.getenv('TELEGRAM_CHAT_ID')
 
             geo_link = ""
             if data.get('coords'):
