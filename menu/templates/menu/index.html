@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ДимОк | Gastro Pub</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        :root { --accent: #ff4d00; --glass: rgba(255, 255, 255, 0.05); }
+        body {
+            background: #0a0a0a url('/static/img/restaurant_bg.jpg') no-repeat center center fixed;
+            background-size: cover; color: white; font-family: 'Inter', sans-serif; margin: 0;
+        }
+        body::before { content: ""; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: -1; }
+
+        .header-title {
+            text-align: center; font-size: 5rem; font-weight: 900; color: var(--accent);
+            margin: 40px 0 10px; text-transform: uppercase; letter-spacing: -2px;
+            animation: smoke 5s infinite ease-in-out;
+        }
+        @keyframes smoke { 0%, 100% { filter: blur(0px); opacity: 1; } 50% { filter: blur(2px); opacity: 0.8; transform: translateY(-5px); } }
+
+        .category-nav {
+            position: sticky; top: 0; background: rgba(10,10,10,0.9); backdrop-filter: blur(10px);
+            padding: 20px; display: flex; gap: 15px; overflow-x: auto; z-index: 100; border-bottom: 1px solid var(--glass);
+        }
+        .cat-btn {
+            text-decoration: none; color: #aaa; padding: 10px 25px; border-radius: 30px;
+            border: 1px solid var(--glass); white-space: nowrap; transition: 0.3s;
+        }
+        .cat-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+        .menu-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 30px; padding: 40px 20px; max-width: 1200px; margin: 0 auto;
+        }
+        .dish-card {
+            background: rgba(255,255,255,0.03); border: 1px solid var(--glass);
+            border-radius: 25px; overflow: hidden; transition: 0.4s;
+            display: flex; flex-direction: column; backdrop-filter: blur(5px);
+        }
+        .dish-card:hover { transform: translateY(-10px); border-color: var(--accent); }
+        .dish-img { width: 100%; height: 220px; object-fit: cover; }
+
+        /* РОЗГОРТАННЯ ОПИСУ */
+        .desc-box { cursor: pointer; padding: 15px 20px; }
+        .desc-text {
+            color: #bbb; font-size: 0.9rem; margin: 0;
+            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+            overflow: hidden; transition: 0.3s;
+        }
+        .expanded .desc-text { -webkit-line-clamp: unset; color: white; }
+        .hint { font-size: 0.7rem; color: var(--accent); margin-top: 5px; font-weight: bold; }
+
+        .price-btn {
+            margin-top: auto; padding: 20px; display: flex; justify-content: space-between; align-items: center;
+            border-top: 1px solid var(--glass);
+        }
+        .add-btn {
+            background: var(--accent); border: none; color: white; padding: 10px 20px;
+            border-radius: 12px; font-weight: bold; cursor: pointer;
+        }
+
+        #cart-modal {
+            position: fixed; top: 0; right: -450px; width: 400px; height: 100%;
+            background: rgba(15,15,15,0.98); backdrop-filter: blur(20px); z-index: 1000;
+            padding: 30px; transition: 0.5s; box-shadow: -10px 0 30px rgba(0,0,0,0.5);
+        }
+        #cart-map { height: 200px; border-radius: 15px; margin-top: 15px; display: none; }
+    </style>
+</head>
+<body>
+
+<h1 class="header-title">ДимОк</h1>
+
+<nav class="category-nav">
+    <a href="/" class="cat-btn {% if not active_category %}active{% endif %}">Все меню</a>
+    {% for cat in categories %}
+    <a href="?category={{ cat.slug }}" class="cat-btn {% if active_category == cat.slug %}active{% endif %}">{{ cat.name }}</a>
+    {% endfor %}
+</nav>
+
+<div class="menu-grid">
+    {% for dish in dishes %}
+    <div class="dish-card">
+        {% if dish.image %}<img src="{{ dish.image.url }}" class="dish-img">{% endif %}
+        <div class="desc-box" onclick="this.parentElement.classList.toggle('expanded')">
+            <h3 style="margin: 0 0 5px 0;">{{ dish.title }}</h3>
+            <p class="desc-text">{{ dish.description }}</p>
+            <div class="hint">Натисніть, щоб прочитати...</div>
+        </div>
+        <div class="price-btn">
+            <span style="font-weight: 900; font-size: 1.2rem;">{{ dish.price|floatformat:0 }} ₴</span>
+            <button class="add-btn" onclick="addToCart('{{ dish.id }}', '{{ dish.title|escapejs }}', {{ dish.price|stringformat:"f" }})">+ Додати</button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div id="cart-modal" style="position: fixed; top: 0; right: -450px; width: 400px; height: 100%; background: #111; z-index: 1000; padding: 25px; transition: 0.4s; color: white; box-shadow: -5px 0 20px rgba(0,0,0,0.8); overflow-y: auto;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2 style="margin: 0; color: #ff4d00;">Кошик</h2>
+        <button onclick="document.getElementById('cart-modal').style.right='-450px'" style="background: none; border: none; color: white; font-size: 2rem; cursor: pointer;">&times;</button>
+    </div>
+
+    <select id="delivery-type" onchange="updateUI()" style="width: 100%; padding: 12px; background: #222; color: white; border-radius: 10px; border: 1px solid #444; margin-bottom: 20px;">
+        <option value="delivery">🚀 Доставка кур'єром</option>
+        <option value="pickup">🛍️ Самовивіз</option>
+        <option value="instore">🍽️ В закладі</option>
+    </select>
+
+    <div id="cart-items"></div>
+
+    <div id="geo-box">
+        <button class="add-btn" style="width: 100%; margin-top: 15px; background: #333;" onclick="getLocation()">📍 Визначити мою геопозицію</button>
+        <div id="delivery-res" style="margin-top: 10px; font-size: 0.9rem; color: #aaa;"></div>
+    </div>
+
+    <div style="margin-top: 20px; padding: 15px; background: #1a1a1a; border-radius: 10px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+            <span>Страви:</span> <span id="sum-dishes">0 ₴</span>
+        </div>
+        <div id="delivery-row" style="display: flex; justify-content: space-between; color: #ff4d00;">
+            <span>Доставка:</span> <span id="sum-delivery">0 ₴</span>
+        </div>
+        <hr style="border-color: #333;">
+        <div style="display: flex; justify-content: space-between; font-size: 1.4rem; font-weight: 900;">
+            <span>Разом:</span> <span id="total-full">0 ₴</span>
+        </div>
+    </div>
+
+    <input type="text" id="phone" placeholder="Ваш номер телефону" style="width: 100%; padding: 15px; margin-top: 20px; background: #222; border: 1px solid #444; color: white; border-radius: 10px;">
+    <button class="add-btn" style="width: 100%; padding: 18px; margin-top: 15px; font-size: 1.1rem;" onclick="sendOrder()">ОФОРМИТИ ЗАМОВЛЕННЯ</button>
+</div>
+
+<script>
+let cart = [];
+let userCoords = null;
+let deliveryCost = 0;
+const RESTAURANT = { lat: 48.9226, lon: 24.7111 };
+
+function addToCart(id, title, price, category) {
+    let item = cart.find(i => i.id === id);
+    if (item) item.q++;
+    else cart.push({ id, title, price: parseFloat(price), q: 1, category });
+
+    document.getElementById('cart-modal').style.right = '0';
+    render();
+}
+
+function render() {
+    const container = document.getElementById('cart-items');
+    let dishesSum = 0;
+
+    container.innerHTML = cart.map((item, index) => {
+        let cost = item.price * item.q;
+        dishesSum += cost;
+        return `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #222;">
+                <div style="flex: 1;">
+                    <div style="font-weight: bold;">${item.title}</div>
+                    <small style="color: #666;">${item.price} ₴ ${(item.category==='ribs'||item.category==='shashlik')?'за 100г':''}</small>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <button onclick="change(${index}, -1)" style="background:#333; border:none; color:white; border-radius:5px; width:25px;">-</button>
+                    <span>${item.q}</span>
+                    <button onclick="change(${index}, 1)" style="background:#333; border:none; color:white; border-radius:5px; width:25px;">+</button>
+                </div>
+                <div style="width: 70px; text-align: right;">${cost.toFixed(0)}₴</div>
+            </div>
+        `;
+    }).join('');
+
+    document.getElementById('sum-dishes').innerText = dishesSum + " ₴";
+    let final = dishesSum + deliveryCost;
+    document.getElementById('sum-delivery').innerText = deliveryCost + " ₴";
+    document.getElementById('total-full').innerText = final + " ₴";
+}
+
+function change(i, d) {
+    cart[i].q += d;
+    if (cart[i].q <= 0) cart.splice(i, 1);
+    render();
+}
+
+function updateUI() {
+    const type = document.getElementById('delivery-type').value;
+    document.getElementById('geo-box').style.display = (type === 'delivery') ? 'block' : 'none';
+    document.getElementById('delivery-row').style.display = (type === 'delivery') ? 'flex' : 'none';
+    if (type !== 'delivery') deliveryCost = 0;
+    render();
+}
+
+function getLocation() {
+    navigator.geolocation.getCurrentPosition(pos => {
+        userCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        // Рахуємо відстань
+        const R = 6371;
+        const dLat = (userCoords.lat - RESTAURANT.lat) * Math.PI / 180;
+        const dLon = (userCoords.lon - RESTAURANT.lon) * Math.PI / 180;
+        const a = Math.sin(dLat/2)**2 + Math.cos(RESTAURANT.lat*Math.PI/180)*Math.cos(userCoords.lat*Math.PI/180)*Math.sin(dLon/2)**2;
+        const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+        // ЛОГІКА ВАРТОСТІ: 50 грн за виїзд + 10 грн за кожен км
+        deliveryCost = Math.round(50 + (dist * 15));
+        document.getElementById('delivery-res').innerText = `Відстань: ${dist.toFixed(1)} км. Доставка: ${deliveryCost} ₴`;
+        render();
+    });
+}
+
+function sendOrder() {
+    const phone = document.getElementById('phone').value;
+    if (!phone) return alert("Введіть телефон!");
+
+    fetch('/create-order/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}' },
+        body: JSON.stringify({
+            cart: cart,
+            phone: phone,
+            delivery_type: document.getElementById('delivery-type').value,
+            delivery_cost: deliveryCost,
+            total: document.getElementById('total-full').innerText.replace(' ₴', ''),
+            coords: userCoords
+        })
+    }).then(res => res.json()).then(data => {
+        if(data.status === 'success') { alert("Замовлення відправлено!"); location.reload(); }
+    });
+}
+</script>
